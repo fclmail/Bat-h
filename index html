@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Batch Arbitrage Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.8.1/dist/ethers.min.js"></script>
+</head>
+<body style="background:#101820; color:white; font-family:sans-serif; padding:20px;">
+  <h2>Batch Arbitrage Test DApp</h2>
+  <button onclick="connectWallet()">Connect Wallet</button>
+  <button onclick="testBuySell()">Test Buy & Sell</button>
+  <pre id="log" style="background:#1e1e2e; padding:10px; border-radius:10px; white-space:pre-wrap;"></pre>
+
+  <script>
+    let provider, signer, walletAddress;
+
+    const router1 = "0x..."; // DEX 1 router (e.g. QuickSwap)
+    const router2 = "0x..."; // DEX 2 router (e.g. SushiSwap)
+    const tokenIn = "0x..."; // Input token (e.g. USDC)
+    const tokenOut = "0x..."; // Output token (e.g. SHIB)
+    const tokenAmountIn = ethers.parseUnits("1", 6); // Adjust decimals
+
+    async function connectWallet() {
+      if (!window.ethereum) return alert("MetaMask not found!");
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      walletAddress = await signer.getAddress();
+      log(`Connected: ${walletAddress}`);
+    }
+
+    async function testBuySell() {
+      try {
+        log("Step 1: Approving token for DEX 1...");
+        const token = new ethers.Contract(tokenIn, ERC20_ABI, signer);
+        await (await token.approve(router1, tokenAmountIn)).wait();
+        log("Approved.");
+
+        log("Step 2: Swapping on DEX 1 (Buy)...");
+        const routerA = new ethers.Contract(router1, ROUTER_ABI, signer);
+        const buyTx = await routerA.swapExactTokensForTokens(
+          tokenAmountIn,
+          0,
+          [tokenIn, tokenOut],
+          walletAddress,
+          Math.floor(Date.now() / 1000) + 60
+        );
+        await buyTx.wait();
+        log("Buy confirmed.");
+
+        log("Step 3: Waiting for bought tokens to arrive...");
+        const tokenReceived = new ethers.Contract(tokenOut, ERC20_ABI, provider);
+        let balance = await tokenReceived.balanceOf(walletAddress);
+        let attempts = 0;
+        while (balance == 0 && attempts < 20) {
+          await new Promise(res => setTimeout(res, 1000));
+          balance = await tokenReceived.balanceOf(walletAddress);
+          attempts++;
+        }
+
+        if (balance > 0) {
+          log(`Token balance received: ${ethers.formatUnits(balance, 18)}`);
+          log("Step 4: Approving for DEX 2...");
+          const tokenOutContract = new ethers.Contract(tokenOut, ERC20_ABI, signer);
+          await (await tokenOutContract.approve(router2, balance)).wait();
+
+          log("Step 5: Swapping on DEX 2 (Sell)...");
+          const routerB = new ethers.Contract(router2, ROUTER_ABI, signer);
+          const sellTx = await routerB.swapExactTokensForTokens(
+            balance,
+            0,
+            [tokenOut, tokenIn],
+            walletAddress,
+            Math.floor(Date.now() / 1000) + 60
+          );
+          await sellTx.wait();
+          log("Sell confirmed. Arbitrage cycle complete.");
+        } else {
+          log("Error: Bought tokens not received in time.");
+        }
+      } catch (err) {
+        log("Error: " + err.message);
+      }
+    }
+
+    function log(msg) {
+      document.getElementById("log").innerText += msg + "\n";
+    }
+
+    const ERC20_ABI = [
+      "function approve(address spender, uint256 amount) public returns (bool)",
+      "function balanceOf(address account) public view returns (uint256)"
+    ];
+
+    const ROUTER_ABI = [
+      "function swapExactTokensForTokens(uint256 amountIn,uint256 amountOutMin,address[] calldata path,address to,uint256 deadline) external returns (uint256[] memory)"
+    ];
+  </script>
+</body>
+</html>
